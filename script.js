@@ -38,7 +38,7 @@ document.getElementById("checkoutBtn").addEventListener("click",()=>{
   modal.classList.add("open");
   setTimeout(()=>document.querySelector(".modal-card").classList.add("done"),100);
 });
-document.getElementById("closeModal").addEventListener("click",()=>modal.classList.remove("open"));
+document.getElementById("closeModal").addEventListener("click",()=>{modal.classList.remove("open");emailOrderContext=null;});
 updateStore();
 
 
@@ -99,7 +99,71 @@ document.getElementById("normalBuy").addEventListener("click",()=>{
 updateNormal();
 
 // Xboggs cart
-const cart=[];
+const CART_COOKIE = "xboggs_cart";
+const DISCOUNT_COOKIE = "xboggs_creator_discount";
+const CART_COOKIE_DAYS = 30;
+
+function setCookie(name, value, days=CART_COOKIE_DAYS){
+  const expires = new Date(Date.now() + days*864e5).toUTCString();
+  document.cookie = `${name}=${encodeURIComponent(value)}; expires=${expires}; path=/; SameSite=Lax`;
+}
+
+function getCookie(name){
+  const prefix = name + "=";
+  const found = document.cookie.split("; ").find(row => row.startsWith(prefix));
+  return found ? decodeURIComponent(found.slice(prefix.length)) : null;
+}
+
+function deleteCookie(name){
+  document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; SameSite=Lax`;
+}
+
+function saveCart(){
+  try{
+    setCookie(CART_COOKIE, JSON.stringify(cart));
+  }catch(err){
+    console.warn("XBOGGS cart could not be saved:", err);
+  }
+}
+
+function loadCart(){
+  try{
+    const raw = getCookie(CART_COOKIE);
+    if(!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  }catch(err){
+    console.warn("XBOGGS cart cookie is invalid:", err);
+    return [];
+  }
+}
+
+function saveDiscount(){
+  try{
+    if(activeDiscount){
+      setCookie(DISCOUNT_COOKIE, JSON.stringify(activeDiscount));
+    }else{
+      deleteCookie(DISCOUNT_COOKIE);
+    }
+  }catch(err){
+    console.warn("XBOGGS discount could not be saved:", err);
+  }
+}
+
+function loadDiscount(){
+  try{
+    const raw = getCookie(DISCOUNT_COOKIE);
+    if(!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed && parsed.code ? parsed : null;
+  }catch(err){
+    return null;
+  }
+}
+
+const cart=loadCart();
+let activeDiscount = loadDiscount(); // {code, freeItems}
+let discountCodes = null;
 const cartCount=document.getElementById("cartCount");
 const cartDrawer=document.getElementById("cartDrawer");
 const cartOverlay=document.getElementById("cartOverlay");
@@ -110,14 +174,59 @@ function addCart(name,price,monthly=0,button=null){
   renderCart();
   if(button){button.classList.add("added");button.textContent="✓ Added to cart";setTimeout(()=>{button.textContent="+ Add to cart";button.classList.remove("added")},1200)}
 }
+function getCartPricing(){
+  const hardware = cart.reduce((a,x)=>a+Number(x.price||0),0);
+  const monthly = cart.reduce((a,x)=>a+Number(x.monthly||0),0);
+
+  // A creator code makes up to N one-time cart items free.
+  // The oldest/first N qualifying items are free; subscriptions are never discounted.
+  let discount = 0;
+  const freeCount = activeDiscount ? Math.max(0, Number(activeDiscount.freeItems)||0) : 0;
+  let remaining = freeCount;
+  const effectiveItems = cart.map(x=>{
+    const original = Number(x.price||0);
+    const free = original > 0 && remaining > 0;
+    if(free){ discount += original; remaining--; }
+    return {...x, originalPrice:original, effectivePrice:free?0:original, creatorFree:free};
+  });
+
+  return {hardware, monthly, discount, effectiveHardware:hardware-discount, effectiveItems};
+}
+
 function renderCart(){
   cartCount.textContent=cart.length;
-  if(!cart.length){cartItems.innerHTML='<div class="empty-cart">Your cart is suspiciously empty.<br><small>Add some crumulance.</small></div>';}
-  else cartItems.innerHTML=cart.map((x,i)=>`<div class="cart-item"><div><b>${x.name}</b><small>${x.monthly?cartMoney(x.monthly)+"/month": "one-time"}</small></div><strong>${cartMoney(x.price)}</strong><button class="remove" data-i="${i}">Remove</button></div>`).join("");
-  const hw=cart.reduce((a,x)=>a+x.price,0), mo=cart.reduce((a,x)=>a+x.monthly,0);
-  document.getElementById("cartHardware").textContent=cartMoney(hw);
-  document.getElementById("cartMonthly").textContent=cartMoney(mo)+"/mo";
-  document.querySelectorAll(".remove").forEach(b=>b.onclick=()=>{cart.splice(Number(b.dataset.i),1);renderCart()});
+  const pricing=getCartPricing();
+
+  if(!cart.length){
+    cartItems.innerHTML='<div class="empty-cart">Your cart is suspiciously empty.<br><small>Add some crumulance.</small></div>';
+  } else {
+    cartItems.innerHTML=pricing.effectiveItems.map((x,i)=>`
+      <div class="cart-item">
+        <div>
+          <b>${x.name}</b>
+          <small>${x.monthly?cartMoney(x.monthly)+"/month":(x.creatorFree?"CONTENT CREATOR FREE™":"one-time")}</small>
+        </div>
+        <strong>${x.creatorFree?'<s>'+cartMoney(x.originalPrice)+'</s> 0,00 €':cartMoney(x.effectivePrice)}</strong>
+        <button class="remove" data-i="${i}">Remove</button>
+      </div>`).join("");
+  }
+
+  document.getElementById("cartHardware").textContent=cartMoney(pricing.effectiveHardware);
+  document.getElementById("cartDiscount").textContent="-"+cartMoney(pricing.discount);
+  document.getElementById("cartMonthly").textContent=cartMoney(pricing.monthly)+"/mo";
+
+  const status=document.getElementById("discountStatus");
+  if(status){
+    status.textContent=activeDiscount
+      ? `Code ${activeDiscount.code} applied: ${activeDiscount.freeItems} one-time item(s) free. Subscriptions are unchanged.`
+      : "Creator codes can make a selected number of cart items free.";
+  }
+
+  document.querySelectorAll(".remove").forEach(b=>b.onclick=()=>{
+    cart.splice(Number(b.dataset.i),1);
+    saveCart();
+    renderCart();
+  });
 }
 function openCart(){cartDrawer.classList.add("open");cartOverlay.classList.add("open")}
 function closeCart(){cartDrawer.classList.remove("open");cartOverlay.classList.remove("open")}
@@ -126,9 +235,15 @@ document.getElementById("cartClose").onclick=closeCart;
 cartOverlay.onclick=closeCart;
 document.getElementById("cartCheckout").onclick=()=>{
   if(!cart.length){openCart();return}
-  const modal=document.getElementById("checkoutModal");
-  document.getElementById("modalText").textContent=`Your cart contains ${cart.length} item(s): ${cartMoney(cart.reduce((a,x)=>a+x.price,0))} once + ${cartMoney(cart.reduce((a,x)=>a+x.monthly,0))}/month. The fictional Xboggs fulfillment department is ready.`;
-  modal.classList.add("open");document.querySelector(".modal-card").classList.add("done");closeCart();
+  const pricing=getCartPricing();
+  openCustomerEmailModal({
+    type:"cart",
+    message:`Your cart contains ${cart.length} item(s): ${cartMoney(pricing.effectiveHardware)} once + ${cartMoney(pricing.monthly)}/month. Enter your details to prepare the fictional order email.`,
+    items:pricing.effectiveItems.map(x=>({...x})),
+    discount:activeDiscount ? {...activeDiscount} : null,
+    originalHardware:pricing.hardware
+  });
+  closeCart();
 };
 
 // Add buttons to configurable hardware/service options
@@ -146,6 +261,89 @@ document.querySelectorAll(".service-add").forEach(x=>{
 });
 renderCart();
 
+
+
+
+// Content creator discount codes live in discount-codes.txt so the static
+// GitHub Pages site can be updated without changing the JavaScript.
+// Format: CODE=NUMBER_OF_FREE_ONE_TIME_ITEMS
+async function loadDiscountCodes(){
+  if(discountCodes) return discountCodes;
+  discountCodes={};
+  try{
+    const response=await fetch("discount-codes.txt",{cache:"no-store"});
+    if(!response.ok) throw new Error("Could not load discount-codes.txt");
+    const text=await response.text();
+    text.split(/\r?\n/).forEach(line=>{
+      const clean=line.trim();
+      if(!clean || clean.startsWith("#") || !clean.includes("=")) return;
+      const [rawCode, rawCount]=clean.split("=");
+      const code=rawCode.trim().toUpperCase();
+      const freeItems=parseInt(rawCount.trim(),10);
+      if(code && Number.isFinite(freeItems) && freeItems>=0) discountCodes[code]=freeItems;
+    });
+  }catch(err){
+    console.warn("XBOGGS discount codes unavailable:",err);
+  }
+  return discountCodes;
+}
+
+const applyDiscount=document.getElementById("applyDiscount");
+const discountInput=document.getElementById("discountCode");
+if(applyDiscount && discountInput){
+  applyDiscount.addEventListener("click",async()=>{
+    const code=discountInput.value.trim().toUpperCase();
+    const status=document.getElementById("discountStatus");
+    const codes=await loadDiscountCodes();
+    if(!code){
+      activeDiscount=null;
+      saveDiscount();
+      status.textContent="Enter a creator code.";
+      status.className="discount-status error";
+      renderCart();
+      return;
+    }
+    if(Object.prototype.hasOwnProperty.call(codes,code)){
+      activeDiscount={code,freeItems:codes[code]};
+      saveDiscount();
+      status.textContent=`Code ${code} applied: ${codes[code]} one-time item(s) free.`;
+      renderCart();
+    }else{
+      activeDiscount=null;
+      saveDiscount();
+      status.textContent="Invalid or expired fictional creator code.";
+      status.className="discount-status error";
+      renderCart();
+    }
+  });
+  discountInput.addEventListener("keydown", event => {
+    if(event.key === "Enter"){
+      event.preventDefault();
+      applyDiscount.click();
+    }
+  });
+}
+
+// Lineup products can now use the same email-order flow as the configurators.
+document.querySelectorAll(".lineup-buy").forEach(button => {
+  button.addEventListener("click", e => {
+    e.preventDefault();
+    const name = button.dataset.product || "XBOGGS product";
+    const price = Number(button.dataset.price || 0);
+    addCart(name, price, 0, button);
+  });
+});
+
+let emailOrderContext = null;
+
+function openCustomerEmailModal(context) {
+  emailOrderContext = context;
+  const modal = document.getElementById("checkoutModal");
+  const text = document.getElementById("modalText");
+  text.textContent = context?.message || "Enter your details below to prepare the fictional order email.";
+  modal.classList.add("open");
+  document.querySelector(".modal-card").classList.add("done");
+}
 
 // Customer details / order email
 const customerForm = document.getElementById("customerForm");
@@ -167,63 +365,69 @@ if (customerForm) {
       return;
     }
 
-    // Build the order from the actual configurator state, not the cart.
-    // The normal configurator can be ordered directly, so its selections
-    // must be included even when nothing has been added to the separate cart.
-    const base = document.querySelector('input[name="baseXboggs"]:checked');
-    const gpu = document.querySelector('input[name="normalGpu"]:checked');
-    const hardwareParts = [];
+    const lines = [];
+    let hardwareTotal = 0;
+    let monthlyTotal = 0;
 
-    if (base) {
-      hardwareParts.push(base.dataset.label || base.value);
-    }
-    if (gpu) {
-      const gpuLabel = gpu.dataset.label || gpu.value;
-      hardwareParts.push(gpuLabel);
+    // New lineup/cart products.
+    if (emailOrderContext?.items?.length) {
+      emailOrderContext.items.forEach(item => {
+        lines.push("- " + item.name + " — " + cartMoney(item.effectivePrice ?? item.price) + (item.creatorFree ? " (FREE via creator code)" : "") + (item.monthly ? " + " + cartMoney(item.monthly) + "/month" : ""));
+        hardwareTotal += Number(item.effectivePrice ?? item.price ?? 0);
+        monthlyTotal += Number(item.monthly || 0);
+      });
     }
 
-    document.querySelectorAll('input[name="normalAdd"]:checked, input.normal-add:checked, .normal-option input[type="checkbox"]:checked').forEach(function (input) {
-      const label = input.dataset.label || input.value;
-      if (label && !hardwareParts.includes(label) && !input.name.includes("baseXboggs") && !input.name.includes("normalGpu")) {
-        hardwareParts.push(label);
-      }
-    });
+    // Existing normal configurator state, included when the user came through
+    // the outright-hardware configurator.
+    if (!emailOrderContext?.items?.length) {
+      const base = document.querySelector('input[name="baseXboggs"]:checked');
+      const gpu = document.querySelector('input[name="normalGpu"]:checked');
+
+      if (base) lines.push("- " + (base.dataset.label || base.value));
+      if (gpu) lines.push("- " + (gpu.dataset.label || gpu.value));
+
+      document.querySelectorAll('input[name="normalAdd"]:checked, input.normal-add:checked, .normal-option input[type="checkbox"]:checked')
+        .forEach(input => {
+          const label = input.dataset.label || input.value;
+          if (label && !lines.some(x => x.includes(label))) lines.push("- " + label);
+        });
+
+      document.querySelectorAll('input[name="serviceAdd"]:checked, input.service-add:checked')
+        .forEach(input => {
+          const label = input.dataset.label || input.value;
+          lines.push("- SERVICE: " + label);
+        });
+
+      hardwareTotal = Number(
+        (document.getElementById("hardwareSummary")?.textContent || "0")
+          .replace(/[^\d,.-]/g, "")
+          .replace(/\./g, "")
+          .replace(",", ".")
+      ) || 0;
+    }
 
     const services = [];
-    document.querySelectorAll('input[name="serviceAdd"]:checked, input.service-add:checked').forEach(function (input) {
-      services.push(input.dataset.label || input.value);
-    });
-
-    // Prefer the configurator's live totals.
-    const hardwareTotal =
-      document.getElementById("hardwareSummary")?.textContent ||
-      document.getElementById("normalHardwareTotal")?.textContent ||
-      document.getElementById("hardwareTotal")?.textContent ||
-      "0,00 €";
-
-    const monthlyTotal =
-      document.getElementById("serviceSummary")?.textContent ||
-      document.getElementById("normalMonthlyTotal")?.textContent ||
-      "0,00 €/mo";
-
-    const orderLines = hardwareParts.length
-      ? hardwareParts.map(function (part) { return "- " + part; }).join("\n")
-      : "- No hardware selected";
-
-    const serviceLines = services.length
-      ? services.map(function (service) { return "- " + service; }).join("\n")
-      : "- No optional services";
+    document.querySelectorAll('input[name="serviceAdd"]:checked, input.service-add:checked')
+      .forEach(input => services.push(input.dataset.label || input.value));
 
     const subject = encodeURIComponent("Xboggs Order — " + name);
     const body = encodeURIComponent(
       "XBOGGS ORDER\n\n" +
       "Customer: " + name + "\n" +
       "Customer email: " + email + "\n\n" +
-      "Hardware:\n" + orderLines + "\n\n" +
-      "Optional services:\n" + serviceLines + "\n\n" +
-      "Hardware total: " + hardwareTotal + "\n" +
-      "Monthly services: " + monthlyTotal + "\n\n" +
-      "Fictional Xboggs storefront order."
+      "Selected products / hardware:\n" +
+      (lines.length ? lines.join("\n") : "- No product selected") +
+      "\n\n" +
+      "Optional services:\n" +
+      (services.length ? services.map(s => "- " + s).join("\n") : "- None") +
+      "\n\n" +
+      "Original hardware / one-time total: " + cartMoney(emailOrderContext?.originalHardware ?? hardwareTotal) + "\n" +
+      "Creator discount: " + (emailOrderContext?.discount ? emailOrderContext.discount.code + " (" + emailOrderContext.discount.freeItems + " free item(s))" : "None") + "\n" +
+      "Hardware / one-time total after discount: " + cartMoney(hardwareTotal) + "\n" +
+      "Monthly services: " + cartMoney(monthlyTotal) + "/month\n\n" +
+      "Fictional Xboggs storefront order.\n" +
+      "No payment is taken by this static website."
     );
 
     window.location.href = "mailto:mylbb@proton.me?subject=" + subject + "&body=" + body;
