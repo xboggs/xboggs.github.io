@@ -1,0 +1,8 @@
+# XBOGGS CONTENT CREATOR DISCOUNT CODES™
+# Format: CODE=NUMBER_OF_FREE_ONE_TIME_ITEMS
+#
+# Edit this file on GitHub Pages to add/revoke codes.
+# The number means how many qualifying one-time cart items become free.
+#
+# Example creator review code:
+jonocraft7=7
