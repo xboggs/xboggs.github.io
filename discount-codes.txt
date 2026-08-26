@@ -20,3 +20,4 @@
 jonocraft7=7
 wakatron64=2
 BringusStudios10=1
+BOGGS10=10%|ACTIVE=true|EXPIRES=2026-12-31
