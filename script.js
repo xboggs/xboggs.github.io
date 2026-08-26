@@ -471,3 +471,114 @@ if (customerForm) {
     window.location.href = "mailto:mylbb@proton.me?subject=" + subject + "&body=" + body;
   });
 }
+
+
+/* XBOGGS Creator Code Manager™ */
+(function () {
+  const CODE_FILE = "discount-codes.txt";
+
+  function parseCreatorCodes(text) {
+    return text.split(/\r?\n/).map(line => line.trim()).filter(Boolean).map(line => {
+      const parts = line.split("|");
+      const first = parts.shift();
+      const eq = first.indexOf("=");
+      if (eq < 0) return null;
+      const code = first.slice(0, eq).trim();
+      const uses = Number(first.slice(eq + 1).trim());
+      const flags = {};
+      parts.forEach(p => {
+        const i = p.indexOf("=");
+        if (i >= 0) flags[p.slice(0, i).trim().toUpperCase()] = p.slice(i + 1).trim();
+      });
+      return {
+        code,
+        uses: Number.isFinite(uses) ? uses : 0,
+        active: String(flags.ACTIVE ?? "true").toLowerCase() === "true",
+        expires: flags.EXPIRES || "NEVER"
+      };
+    }).filter(Boolean);
+  }
+
+  function codeStatus(c) {
+    if (!c.active) return { expired: true, label: "INACTIVE" };
+    if (c.expires !== "NEVER") {
+      const d = new Date(c.expires + "T23:59:59");
+      if (!Number.isNaN(d.getTime()) && Date.now() > d.getTime()) {
+        return { expired: true, label: "EXPIRED" };
+      }
+    }
+    if (c.uses <= 0) return { expired: true, label: "NO USES LEFT" };
+    return { expired: false, label: "ACTIVE" };
+  }
+
+  function renderCreatorCodeProducts(codes) {
+    const existing = document.getElementById("xboggs-creator-code-products");
+    if (existing) existing.remove();
+
+    const box = document.createElement("section");
+    box.id = "xboggs-creator-code-products";
+    box.style.cssText =
+      "margin:24px 0;padding:20px;border:1px solid #ddd;border-radius:12px;background:#fff;" +
+      "font-family:inherit;";
+
+    const title = document.createElement("h2");
+    title.textContent = "Creator Codes";
+    box.appendChild(title);
+
+    codes.forEach(c => {
+      const status = codeStatus(c);
+      const product = document.createElement("div");
+      product.style.cssText =
+        "display:flex;align-items:center;justify-content:space-between;gap:16px;" +
+        "padding:14px 0;border-top:1px solid #eee;";
+
+      const info = document.createElement("div");
+      const codeName = document.createElement("strong");
+      codeName.textContent = c.code;
+      info.appendChild(codeName);
+
+      const meta = document.createElement("div");
+      meta.style.cssText = "font-size:.9em;color:#666;margin-top:4px;";
+      meta.textContent = `${c.uses} use${c.uses === 1 ? "" : "s"} · Expires: ${c.expires}`;
+      info.appendChild(meta);
+
+      const badge = document.createElement("span");
+      badge.textContent = status.label;
+      badge.style.cssText = status.expired
+        ? "color:#c00;font-weight:700;"
+        : "color:#087f23;font-weight:700;";
+
+      product.appendChild(info);
+      product.appendChild(badge);
+      box.appendChild(product);
+    });
+
+    // Insert near the existing creator-code area if possible; otherwise at the end.
+    const target =
+      document.querySelector("#creator-codes, .creator-codes, [data-creator-codes]") ||
+      document.querySelector("main") ||
+      document.body;
+    target.appendChild(box);
+  }
+
+  async function loadCreatorCodeProducts() {
+    try {
+      const response = await fetch(CODE_FILE, { cache: "no-store" });
+      if (!response.ok) return;
+      const text = await response.text();
+      renderCreatorCodeProducts(parseCreatorCodes(text));
+    } catch (_) {
+      // Keep the normal site working if the TXT file cannot be loaded.
+    }
+  }
+
+  // Expose a helper so the existing code can refresh the product list if needed.
+  window.renderCreatorCodeProducts = renderCreatorCodeProducts;
+  window.loadCreatorCodeProducts = loadCreatorCodeProducts;
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", loadCreatorCodeProducts);
+  } else {
+    loadCreatorCodeProducts();
+  }
+})();
