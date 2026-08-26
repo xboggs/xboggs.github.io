@@ -1,15 +1,22 @@
-# XBOGGS Discount Codes™
-# Plain number = FREE ITEMS (original behavior):
+# XBOGGS DISCOUNT CODES™
+#
+# Plain number = free one-time items:
 #   WAKATRON64=2
-# Fixed money discount:
+#
+# Fixed discount:
 #   WAKATRON64=€10.99
+#
 # Percentage discount:
 #   BOGGS10=10%
 #
 # Optional flags:
-#   ACTIVE=true|EXPIRES=2026-12-31|USES=10
+#   ACTIVE=true
+#   EXPIRES=2026-12-31
+#   USES=10
 #
-jonocraft7=7|ACTIVE=true|EXPIRES=2026-12-31
-wakatron64=2|ACTIVE=true|EXPIRES=NEVER
-BringusStudios10=1|ACTIVE=false|EXPIRES=2026-10-31
-BOGGS10=10%|ACTIVE=true|EXPIRES=2026-09-25
+# Example:
+#   BOGGS10=10%|ACTIVE=true|EXPIRES=2026-12-31|USES=10
+#
+jonocraft7=7
+wakatron64=2
+BringusStudios10=1

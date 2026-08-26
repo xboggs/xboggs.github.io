@@ -83,89 +83,20 @@
 .discount-box small{display:block;margin-top:7px;opacity:.7}
 .discount-box .cart-add{margin:0}
 
-/* XBOGGS CONTENT CREATOR DISCOUNT™ — visibility/layout fix */
-.discount-box{
-  display:block !important;
-  width:100%;
-  box-sizing:border-box;
-  margin:18px 0 16px;
-  padding:16px;
-  border:1px solid rgba(180,255,0,.28);
-  border-radius:14px;
-  background:rgba(180,255,0,.055);
-}
-.discount-title{
-  display:block;
-  margin:0 0 10px;
-  font-size:12px;
-  line-height:1.25;
-  font-weight:900;
-  letter-spacing:.09em;
-}
-.discount-row{
-  display:flex !important;
-  align-items:stretch;
-  gap:8px;
-  width:100%;
-}
-.discount-input{
-  display:block !important;
-  flex:1 1 auto !important;
-  width:100% !important;
-  min-width:0 !important;
-  height:44px !important;
-  box-sizing:border-box;
-  padding:0 13px !important;
-  border:1px solid rgba(255,255,255,.25) !important;
-  border-radius:9px !important;
-  outline:none;
-  background:#0d0d0d !important;
-  color:#fff !important;
-  font:inherit;
-  font-size:14px !important;
-  opacity:1 !important;
-}
-.discount-input::placeholder{color:rgba(255,255,255,.48);opacity:1}
-.discount-input:focus{
-  border-color:#b6ff00 !important;
-  box-shadow:0 0 0 2px rgba(182,255,0,.13);
-}
-.discount-apply{
-  flex:0 0 92px !important;
-  height:44px !important;
-  border:1px solid #b6ff00 !important;
-  border-radius:9px !important;
-  background:#b6ff00 !important;
-  color:#101010 !important;
-  font:inherit;
-  font-weight:900;
-  cursor:pointer;
-}
-.discount-apply:hover{filter:brightness(1.08)}
-.discount-status{
-  display:block;
-  margin-top:9px;
-  min-height:18px;
-  color:rgba(255,255,255,.68);
-  font-size:12px;
-  line-height:1.45;
-}
-.discount-status.success{color:#b6ff00}
-.discount-status.error{color:#ff6b6b}
-
-.cart-totals{
-  display:grid !important;
-  grid-template-columns:1fr auto !important;
-  gap:8px 18px !important;
-  align-items:center;
-}
-.cart-totals span,.cart-totals b{display:block !important}
-
-.cart-saved-note{display:block;margin-top:4px;font-size:10px;opacity:.5;letter-spacing:.04em}
 
 
-.applied-discount-item{border-top:1px solid #b7ff00;background:#151a08}
-.applied-discount-item strong{color:#b7ff00}
-.applied-discount-item .discount-remove{color:#ff6b6b}
-.discount-status.error{color:#ff6b6b}
+/* XBOGGS Discount Code™ */
+.discount-box{margin-bottom:16px;padding:14px;border:1px solid #292929;border-radius:6px;background:#0d0d0d}
+.discount-title{font-size:10px;font-weight:900;letter-spacing:1.5px;margin-bottom:9px}
+.discount-row{display:flex;gap:8px}
+.discount-input{min-width:0;flex:1;padding:10px 11px;border:1px solid #333;border-radius:4px;background:#080808;color:#eee;font:inherit;font-size:11px;outline:none}
+.discount-input:focus{border-color:#b7ff00}
+.discount-input::placeholder{color:#666}
+.discount-apply{border:1px solid #b7ff00;background:#b7ff00;color:#090909;border-radius:4px;padding:0 14px;font-size:10px;font-weight:900;cursor:pointer}
+.discount-apply:hover{filter:brightness(1.05)}
+.discount-status{margin-top:8px;color:#777;font-size:9px;line-height:1.5;min-height:14px}
 .discount-status.success{color:#b7ff00}
+.discount-status.error{color:#ff6b6b}
+.applied-discount-item{border-top:1px solid #292929;background:#0d0d0d}
+.applied-discount-item .discount-code-label{color:#b7ff00}
+.applied-discount-item .remove{color:#ff6b6b}

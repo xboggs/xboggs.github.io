@@ -100,7 +100,8 @@ updateNormal();
 
 // Xboggs cart
 const CART_COOKIE = "xboggs_cart";
-const DISCOUNT_COOKIE = "xboggs_creator_discount";
+const DISCOUNT_COOKIE = "xboggs_discount_code";
+const OLD_DISCOUNT_COOKIE = "xboggs_creator_discount";
 const CART_COOKIE_DAYS = 30;
 
 function setCookie(name, value, days=CART_COOKIE_DAYS){
@@ -119,224 +120,108 @@ function deleteCookie(name){
 }
 
 function saveCart(){
-  try{
-    setCookie(CART_COOKIE, JSON.stringify(cart));
-  }catch(err){
-    console.warn("XBOGGS cart could not be saved:", err);
-  }
+  try{ setCookie(CART_COOKIE, JSON.stringify(cart)); }
+  catch(err){ console.warn("XBOGGS cart could not be saved:", err); }
 }
 
 function loadCart(){
   try{
-    const raw = getCookie(CART_COOKIE);
+    const raw=getCookie(CART_COOKIE);
     if(!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
+    const parsed=JSON.parse(raw);
+    return Array.isArray(parsed)?parsed:[];
   }catch(err){
-    console.warn("XBOGGS cart cookie is invalid:", err);
+    console.warn("XBOGGS cart cookie is invalid:",err);
     return [];
   }
 }
 
 function saveDiscount(){
   try{
-    if(activeDiscount){
-      setCookie(DISCOUNT_COOKIE, JSON.stringify(activeDiscount));
-    }else{
-      deleteCookie(DISCOUNT_COOKIE);
-    }
+    if(activeDiscount) setCookie(DISCOUNT_COOKIE,JSON.stringify(activeDiscount));
+    else deleteCookie(DISCOUNT_COOKIE);
   }catch(err){
-    console.warn("XBOGGS discount could not be saved:", err);
+    console.warn("XBOGGS discount could not be saved:",err);
   }
 }
 
 function loadDiscount(){
   try{
-    const raw = getCookie(DISCOUNT_COOKIE);
+    const raw=getCookie(DISCOUNT_COOKIE);
     if(!raw) return null;
-    const parsed = JSON.parse(raw);
-    return parsed && parsed.code ? parsed : null;
-  }catch(err){
-    return null;
-  }
+    const parsed=JSON.parse(raw);
+    if(!parsed || !parsed.code || !parsed.type) return null;
+    return parsed;
+  }catch(err){ return null; }
 }
 
+// Discard the old discount-code cookie so an old browser session cannot
+// silently turn a percentage code into N free items.
+deleteCookie(OLD_DISCOUNT_COOKIE);
+
 const cart=loadCart();
-let activeDiscount = loadDiscount(); // {code, freeItems}
-let discountCodes = null;
+let activeDiscount=loadDiscount();
+let discountCodes=null;
+
 const cartCount=document.getElementById("cartCount");
 const cartDrawer=document.getElementById("cartDrawer");
 const cartOverlay=document.getElementById("cartOverlay");
 const cartItems=document.getElementById("cartItems");
-function cartMoney(n){return n.toFixed(2).replace(".",",")+" €";}
+const discountInput=document.getElementById("discountCode");
+const applyDiscount=document.getElementById("applyDiscount");
+
+function cartMoney(n){
+  return Number(n||0).toFixed(2).replace(".",",")+" €";
+}
+
 function addCart(name,price,monthly=0,button=null){
   cart.push({name,price,monthly});
+  saveCart();
   renderCart();
-  if(button){button.classList.add("added");button.textContent="✓ Added to cart";setTimeout(()=>{button.textContent="+ Add to cart";button.classList.remove("added")},1200)}
+
+  if(button){
+    button.classList.add("added");
+    button.textContent="✓ Added to cart";
+    setTimeout(()=>{
+      button.textContent="+ Add to cart";
+      button.classList.remove("added");
+    },1200);
+  }
 }
-function getCartPricing(){
-  const hardware = cart.reduce((a,x)=>a+Number(x.price||0),0);
-  const monthly = cart.reduce((a,x)=>a+Number(x.monthly||0),0);
 
-  let discount = 0;
-  let freeRemaining = activeDiscount?.type === "free_items"
-    ? Math.max(0, Number(activeDiscount.value) || 0)
-    : 0;
+function parseDiscountValue(raw){
+  const value=String(raw||"").trim();
 
-  const effectiveItems = cart.map(x=>{
-    const original = Number(x.price||0);
-    let itemDiscount = 0;
+  // Original discount-code behavior preserved:
+  // CODE=2 means two free one-time items.
+  if(/^\d+(?:[.,]\d+)?$/.test(value)){
+    return {type:"free_items",value:Number(value.replace(",","."))};
+  }
 
-    if(original > 0 && freeRemaining > 0){
-      itemDiscount = original;
-      freeRemaining--;
-    }
-
+  // Fixed money discount:
+  // CODE=€10.99
+  if(/^€\s*\d+(?:[.,]\d{1,2})?$/.test(value)){
     return {
-      ...x,
-      originalPrice: original,
-      effectivePrice: original - itemDiscount,
-      creatorFree: itemDiscount > 0
+      type:"amount",
+      value:Number(value.replace("€","").replace(",",".").trim())
     };
-  });
-
-  discount += effectiveItems.reduce((a,x)=>a+(x.originalPrice-x.effectivePrice),0);
-
-  const remainingHardware = Math.max(0, hardware - discount);
-
-  if(activeDiscount?.type === "amount"){
-    discount += Math.min(remainingHardware, Math.max(0, Number(activeDiscount.value) || 0));
-  }else if(activeDiscount?.type === "percent"){
-    discount += remainingHardware * Math.min(100, Math.max(0, Number(activeDiscount.value) || 0)) / 100;
   }
 
-  return {
-    hardware,
-    monthly,
-    discount,
-    effectiveHardware: Math.max(0, hardware-discount),
-    effectiveItems
-  };
+  // Percentage discount:
+  // CODE=10%
+  if(/^\d+(?:[.,]\d+)?%$/.test(value)){
+    return {
+      type:"percent",
+      value:Number(value.slice(0,-1).replace(",","."))
+    };
+  }
+
+  return null;
 }
 
-function renderCart(){
-  cartCount.textContent=cart.length;
-  const pricing=getCartPricing();
-
-  const productHtml = pricing.effectiveItems.map((x,i)=>`
-      <div class="cart-item">
-        <div>
-          <b>${x.name}</b>
-          <small>${x.monthly?cartMoney(x.monthly)+"/month":(x.creatorFree?"DISCOUNT APPLIED · FREE ITEM™":"one-time")}</small>
-        </div>
-        <strong>${x.creatorFree?'<s>'+cartMoney(x.originalPrice)+'</s> 0,00 €':cartMoney(x.effectivePrice)}</strong>
-        <button class="remove" data-i="${i}">Remove</button>
-      </div>`).join("");
-
-  let discountHtml = "";
-  if(activeDiscount){
-    const label = activeDiscount.type === "free_items"
-      ? `${activeDiscount.value} free item${activeDiscount.value === 1 ? "" : "s"}`
-      : activeDiscount.type === "amount"
-        ? `-${cartMoney(Number(activeDiscount.value)||0)}`
-        : `-${Number(activeDiscount.value)||0}%`;
-
-    discountHtml = `
-      <div class="cart-item applied-discount-item">
-        <div>
-          <b>Discount Code</b>
-          <small>${activeDiscount.code} · ${label}</small>
-        </div>
-        <strong>APPLIED</strong>
-        <button class="remove discount-remove" id="removeDiscount" type="button">Remove</button>
-      </div>`;
-  }
-
-  cartItems.innerHTML = (discountHtml + productHtml) ||
-    '<div class="empty-cart">Your cart is suspiciously empty.<br><small>Add some crumulance.</small></div>';
-
-  document.getElementById("cartHardware").textContent=cartMoney(pricing.effectiveHardware);
-  document.getElementById("cartDiscount").textContent="-"+cartMoney(pricing.discount);
-  document.getElementById("cartMonthly").textContent=cartMoney(pricing.monthly);
-
-  const status=document.getElementById("discountStatus");
-  if(status){
-    status.className = "discount-status" + (activeDiscount ? " success" : "");
-    status.textContent = activeDiscount
-      ? `Code ${activeDiscount.code} applied: ${
-          activeDiscount.type === "free_items"
-            ? `${activeDiscount.value} one-time item(s) free. Subscriptions are unchanged.`
-            : activeDiscount.type === "amount"
-              ? `${cartMoney(activeDiscount.value)} off. Subscriptions are unchanged.`
-              : `${activeDiscount.value}% off. Subscriptions are unchanged.`
-        }`
-      : "Enter a discount code to apply it to your Boggs basket.";
-  }
-
-  document.querySelectorAll(".remove").forEach(b=>b.onclick=()=>{
-    if(b.id==="removeDiscount") return;
-    cart.splice(Number(b.dataset.i),1);
-    saveCart();
-    renderCart();
-  });
-
-  document.getElementById("removeDiscount")?.addEventListener("click",()=>{
-    activeDiscount=null;
-    saveDiscount();
-    discountInput.value="";
-    renderCart();
-  });
-}
-
-function openCart(){cartDrawer.classList.add("open");cartOverlay.classList.add("open")}
-function closeCart(){cartDrawer.classList.remove("open");cartOverlay.classList.remove("open")}
-document.getElementById("cartOpen").onclick=openCart;
-document.getElementById("cartClose").onclick=closeCart;
-cartOverlay.onclick=closeCart;
-document.getElementById("cartCheckout").onclick=()=>{
-  if(!cart.length){openCart();return}
-  const pricing=getCartPricing();
-  openCustomerEmailModal({
-    type:"cart",
-    message:`Your cart contains ${cart.length} item(s): ${cartMoney(pricing.effectiveHardware)} once + ${cartMoney(pricing.monthly)}/month. Enter your details to prepare the fictional order email.`,
-    items:pricing.effectiveItems.map(x=>({...x})),
-    discount:activeDiscount ? {...activeDiscount} : null,
-    originalHardware:pricing.hardware
-  });
-  closeCart();
-};
-
-// Add buttons to configurable hardware/service options
-document.querySelectorAll(".normal-add").forEach(x=>{
-  const label=x.dataset.label, price=Number(x.dataset.add);
-  const b=document.createElement("button");b.className="cart-add";b.textContent="+ Add to cart";
-  b.onclick=e=>{e.preventDefault();addCart(label,price<0?0:price,0,b)};
-  x.closest(".normal-option").appendChild(b);
-});
-document.querySelectorAll(".service-add").forEach(x=>{
-  const label=x.dataset.label, monthly=Number(x.dataset.add);
-  const b=document.createElement("button");b.className="cart-add";b.textContent="+ Add to cart";
-  b.onclick=e=>{e.preventDefault();addCart(label,0,monthly,b)};
-  x.closest(".service-option").appendChild(b);
-});
-renderCart();
-
-
-
-
-
-// Discount codes
-// Format:
-//   WAKATRON64=2
-//     -> 2 free one-time items
-//   WAKATRON64=€10.99
-//     -> €10.99 off one-time hardware
-//   BOGGS10=10%
-//     -> 10% off one-time hardware
-// Optional:
-//   |ACTIVE=true|EXPIRES=2026-12-31|USES=10
 async function loadDiscountCodes(){
   if(discountCodes) return discountCodes;
+
   discountCodes={};
 
   try{
@@ -347,56 +232,58 @@ async function loadDiscountCodes(){
 
     text.split(/\r?\n/).forEach(line=>{
       const clean=line.trim();
+
       if(!clean || clean.startsWith("#") || !clean.includes("=")) return;
 
       const separator=clean.indexOf("=");
       const code=clean.slice(0,separator).trim().toUpperCase();
-      const rest=clean.slice(separator+1);
-      const fields=rest.split("|").map(x=>x.trim()).filter(Boolean);
-      const rawValue=fields.shift();
-      if(!code || !rawValue) return;
+      const rest=clean.slice(separator+1).trim();
+
+      const parts=rest.split("|").map(x=>x.trim()).filter(Boolean);
+      const rawValue=parts.shift();
+      const discount=parseDiscountValue(rawValue);
+
+      if(!code || !discount) return;
 
       const flags={};
-      fields.forEach(field=>{
-        const eq=field.indexOf("=");
-        if(eq!==-1){
-          flags[field.slice(0,eq).trim().toUpperCase()]=field.slice(eq+1).trim();
+      parts.forEach(part=>{
+        const i=part.indexOf("=");
+        if(i!==-1){
+          flags[part.slice(0,i).trim().toUpperCase()]=part.slice(i+1).trim();
         }
       });
 
-      let type=null;
-      let value=null;
-
-      if(/^\d+(?:[.,]\d+)?$/.test(rawValue)){
-        type="free_items";
-        value=Number(rawValue.replace(",","."));
-      }else if(/^€\s*\d+(?:[.,]\d{1,2})?$/.test(rawValue)){
-        type="amount";
-        value=Number(rawValue.replace("€","").replace(",",".").trim());
-      }else if(/^\d+(?:[.,]\d+)?%$/.test(rawValue)){
-        type="percent";
-        value=Number(rawValue.slice(0,-1).replace(",","."));
-      }
-
-      if(!type || !Number.isFinite(value) || value<0) return;
-
-      const activeValue=(flags.ACTIVE ?? "true").toLowerCase();
+      const activeValue=String(flags.ACTIVE ?? "true").toLowerCase();
       const active=["true","1","yes","on"].includes(activeValue);
-      const expires=flags.EXPIRES || flags.EXPIRATION || "NEVER";
 
+      const expires=flags.EXPIRES || "NEVER";
       let expired=false;
+
       if(expires.toUpperCase()!=="NEVER"){
         const match=/^(\d{4})-(\d{2})-(\d{2})$/.exec(expires);
         if(!match) return;
-        const expiry=new Date(Number(match[1]),Number(match[2])-1,Number(match[3]));
-        const today=new Date();
-        today.setHours(0,0,0,0);
-        expiry.setHours(0,0,0,0);
-        expired=today>expiry;
+
+        const expiry=new Date(
+          Number(match[1]),
+          Number(match[2])-1,
+          Number(match[3]),
+          23,59,59,999
+        );
+
+        expired=Date.now()>expiry.getTime();
       }
 
       const uses=flags.USES!==undefined ? Number(flags.USES) : null;
-      discountCodes[code]={code,type,value,active,expired,uses};
+
+      discountCodes[code]={
+        code,
+        type:discount.type,
+        value:discount.value,
+        active,
+        expires,
+        expired,
+        uses
+      };
     });
   }catch(err){
     console.warn("XBOGGS discount codes unavailable:",err);
@@ -405,80 +292,266 @@ async function loadDiscountCodes(){
   return discountCodes;
 }
 
-const applyDiscount=document.getElementById("applyDiscount");
-const discountInput=document.getElementById("discountCode");
-
-async function applyDiscountCode(){
-  const code=discountInput.value.trim().toUpperCase();
-  const status=document.getElementById("discountStatus");
-  const codes=await loadDiscountCodes();
-
-  if(!code){
-    activeDiscount=null;
-    saveDiscount();
-    status.textContent="Enter a discount code.";
-    status.className="discount-status error";
-    renderCart();
-    return;
-  }
+function validateDiscount(code,codes){
+  if(!code) return {ok:false,message:"Enter a discount code."};
 
   const found=codes[code];
 
-  if(!found){
-    activeDiscount=null;
-    saveDiscount();
-    status.textContent="Discount code not found.";
-    status.className="discount-status error";
-    renderCart();
-    return;
+  if(!found) return {ok:false,message:"Discount code not found."};
+  if(!found.active) return {ok:false,message:"Discount code is not activated."};
+  if(found.expired) return {ok:false,message:"Discount code has expired."};
+
+  if(
+    found.uses!==null &&
+    (!Number.isFinite(found.uses) || found.uses<=0)
+  ){
+    return {ok:false,message:"Discount code has no uses remaining."};
   }
 
-  if(!found.active){
-    activeDiscount=null;
-    saveDiscount();
-    status.textContent="Discount code is not activated.";
-    status.className="discount-status error";
-    renderCart();
-    return;
-  }
-
-  if(found.expired){
-    activeDiscount=null;
-    saveDiscount();
-    status.textContent="Discount code has expired.";
-    status.className="discount-status error";
-    renderCart();
-    return;
-  }
-
-  if(found.uses!==null && (!Number.isFinite(found.uses) || found.uses<=0)){
-    activeDiscount=null;
-    saveDiscount();
-    status.textContent="Discount code has no uses remaining.";
-    status.className="discount-status error";
-    renderCart();
-    return;
-  }
-
-  activeDiscount={
-    code:found.code,
-    type:found.type,
-    value:found.value,
-    expires:found.expires
-  };
-  saveDiscount();
-  renderCart();
+  return {ok:true,discount:found};
 }
 
+function discountDescription(discount){
+  if(!discount) return "";
+
+  if(discount.type==="free_items"){
+    const n=discount.value;
+    return `${n} free item${n===1?"":"s"}`;
+  }
+
+  if(discount.type==="amount"){
+    return `${cartMoney(discount.value)} discount`;
+  }
+
+  return `${discount.value}% discount`;
+}
+
+function getCartPricing(){
+  const hardware=cart.reduce((a,x)=>a+Number(x.price||0),0);
+  const monthly=cart.reduce((a,x)=>a+Number(x.monthly||0),0);
+
+  let discount=0;
+  let remainingFree=activeDiscount?.type==="free_items"
+    ? Math.max(0,Number(activeDiscount.value)||0)
+    : 0;
+
+  const effectiveItems=cart.map(x=>{
+    const original=Number(x.price||0);
+    let itemDiscount=0;
+
+    // Free-item codes affect only one-time hardware.
+    if(original>0 && remainingFree>0){
+      itemDiscount=original;
+      remainingFree--;
+    }
+
+    return {
+      ...x,
+      originalPrice:original,
+      effectivePrice:original-itemDiscount,
+      discountAmount:itemDiscount,
+      creatorFree:itemDiscount>0
+    };
+  });
+
+  discount+=effectiveItems.reduce(
+    (sum,x)=>sum+x.discountAmount,0
+  );
+
+  const remainingHardware=Math.max(0,hardware-discount);
+
+  // € amount and percentage discounts affect one-time hardware only.
+  if(activeDiscount?.type==="amount"){
+    discount+=Math.min(
+      remainingHardware,
+      Math.max(0,Number(activeDiscount.value)||0)
+    );
+  }else if(activeDiscount?.type==="percent"){
+    const percent=Math.min(
+      100,
+      Math.max(0,Number(activeDiscount.value)||0)
+    );
+    discount+=remainingHardware*percent/100;
+  }
+
+  return {
+    hardware,
+    monthly,
+    discount,
+    effectiveHardware:Math.max(0,hardware-discount),
+    effectiveItems
+  };
+}
+
+function renderCart(){
+  cartCount.textContent=cart.length;
+
+  const pricing=getCartPricing();
+
+  const appliedDiscountHtml=activeDiscount ? `
+    <div class="cart-item applied-discount-item">
+      <div>
+        <b class="discount-code-label">Discount Code</b>
+        <small>${activeDiscount.code} · ${discountDescription(activeDiscount)}</small>
+      </div>
+      <strong>APPLIED</strong>
+      <button class="remove" id="removeDiscount" type="button">Remove</button>
+    </div>
+  ` : "";
+
+  const itemsHtml=pricing.effectiveItems.map((x,i)=>`
+    <div class="cart-item">
+      <div>
+        <b>${x.name}</b>
+        <small>${
+          x.monthly
+            ? cartMoney(x.monthly)+"/month"
+            : x.creatorFree
+              ? "DISCOUNT APPLIED · FREE ITEM™"
+              : "one-time"
+        }</small>
+      </div>
+      <strong>${
+        x.creatorFree
+          ? "<s>"+cartMoney(x.originalPrice)+"</s> 0,00 €"
+          : cartMoney(x.effectivePrice)
+      }</strong>
+      <button class="remove" data-i="${i}" type="button">Remove</button>
+    </div>
+  `).join("");
+
+  cartItems.innerHTML =
+    appliedDiscountHtml +
+    (itemsHtml || '<div class="empty-cart">Your cart is suspiciously empty.<br><small>Add some crumulance.</small></div>');
+
+  document.getElementById("cartHardware").textContent=cartMoney(pricing.effectiveHardware);
+  document.getElementById("cartDiscount").textContent="-"+cartMoney(pricing.discount);
+  document.getElementById("cartMonthly").textContent=cartMoney(pricing.monthly)+"/mo";
+
+  const status=document.getElementById("discountStatus");
+
+  if(status){
+    status.className="discount-status"+(activeDiscount?" success":"");
+
+    status.textContent=activeDiscount
+      ? `Code ${activeDiscount.code} applied: ${discountDescription(activeDiscount)}. Subscriptions are unchanged.`
+      : "Enter a discount code to apply it to your Boggs basket.";
+  }
+
+  document.querySelectorAll(".cart-item .remove[data-i]").forEach(button=>{
+    button.onclick=()=>{
+      cart.splice(Number(button.dataset.i),1);
+      saveCart();
+      renderCart();
+    };
+  });
+
+  document.getElementById("removeDiscount")?.addEventListener("click",()=>{
+    activeDiscount=null;
+    saveDiscount();
+    if(discountInput) discountInput.value="";
+    renderCart();
+  });
+}
+
+function openCart(){
+  cartDrawer.classList.add("open");
+  cartOverlay.classList.add("open");
+}
+
+function closeCart(){
+  cartDrawer.classList.remove("open");
+  cartOverlay.classList.remove("open");
+}
+
+document.getElementById("cartOpen").onclick=openCart;
+document.getElementById("cartClose").onclick=closeCart;
+cartOverlay.onclick=closeCart;
+
+document.getElementById("cartCheckout").onclick=()=>{
+  if(!cart.length){openCart();return}
+
+  const pricing=getCartPricing();
+
+  openCustomerEmailModal({
+    type:"cart",
+    message:`Your cart contains ${cart.length} item(s): ${cartMoney(pricing.effectiveHardware)} once + ${cartMoney(pricing.monthly)}/month. Enter your details to prepare the fictional order email.`,
+    items:pricing.effectiveItems.map(x=>({...x})),
+    discount:activeDiscount ? {...activeDiscount} : null,
+    originalHardware:pricing.hardware
+  });
+
+  closeCart();
+};
+
 if(applyDiscount && discountInput){
-  applyDiscount.addEventListener("click",applyDiscountCode);
+  const apply=async()=>{
+    const code=discountInput.value.trim().toUpperCase();
+    const status=document.getElementById("discountStatus");
+    const codes=await loadDiscountCodes();
+    const result=validateDiscount(code,codes);
+
+    if(!result.ok){
+      activeDiscount=null;
+      saveDiscount();
+      status.textContent=result.message;
+      status.className="discount-status error";
+      renderCart();
+      // renderCart restores the normal status; put the error back after it.
+      status.textContent=result.message;
+      status.className="discount-status error";
+      return;
+    }
+
+    activeDiscount={
+      code:result.discount.code,
+      type:result.discount.type,
+      value:result.discount.value,
+      expires:result.discount.expires
+    };
+
+    saveDiscount();
+    renderCart();
+  };
+
+  applyDiscount.addEventListener("click",apply);
+
   discountInput.addEventListener("keydown",event=>{
     if(event.key==="Enter"){
       event.preventDefault();
-      applyDiscountCode();
+      apply();
     }
   });
 }
+
+// Add buttons to configurable hardware/service options
+document.querySelectorAll(".normal-add").forEach(x=>{
+  const label=x.dataset.label;
+  const price=Number(x.dataset.add);
+  const b=document.createElement("button");
+  b.className="cart-add";
+  b.textContent="+ Add to cart";
+  b.onclick=e=>{
+    e.preventDefault();
+    addCart(label,price<0?0:price,0,b);
+  };
+  x.closest(".normal-option").appendChild(b);
+});
+
+document.querySelectorAll(".service-add").forEach(x=>{
+  const label=x.dataset.label;
+  const monthly=Number(x.dataset.add);
+  const b=document.createElement("button");
+  b.className="cart-add";
+  b.textContent="+ Add to cart";
+  b.onclick=e=>{
+    e.preventDefault();
+    addCart(label,0,monthly,b);
+  };
+  x.closest(".service-option").appendChild(b);
+});
+
+renderCart();
 
 // Lineup products can now use the same email-order flow as the configurators.
 document.querySelectorAll(".lineup-buy").forEach(button => {
@@ -528,7 +601,7 @@ if (customerForm) {
     // New lineup/cart products.
     if (emailOrderContext?.items?.length) {
       emailOrderContext.items.forEach(item => {
-        lines.push("- " + item.name + " — " + cartMoney(item.effectivePrice ?? item.price) + (item.creatorFree ? " (FREE via creator code)" : "") + (item.monthly ? " + " + cartMoney(item.monthly) + "/month" : ""));
+        lines.push("- " + item.name + " — " + cartMoney(item.effectivePrice ?? item.price) + (item.creatorFree ? " (FREE via discount code)" : "") + (item.monthly ? " + " + cartMoney(item.monthly) + "/month" : ""));
         hardwareTotal += Number(item.effectivePrice ?? item.price ?? 0);
         monthlyTotal += Number(item.monthly || 0);
       });
