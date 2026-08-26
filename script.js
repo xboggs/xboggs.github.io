@@ -178,56 +178,116 @@ function getCartPricing(){
   const hardware = cart.reduce((a,x)=>a+Number(x.price||0),0);
   const monthly = cart.reduce((a,x)=>a+Number(x.monthly||0),0);
 
-  // A creator code makes up to N one-time cart items free.
-  // The oldest/first N qualifying items are free; subscriptions are never discounted.
   let discount = 0;
-  const freeCount = activeDiscount ? Math.max(0, Number(activeDiscount.freeItems)||0) : 0;
-  let remaining = freeCount;
+  let freeRemaining = activeDiscount?.type === "free_items"
+    ? Math.max(0, Number(activeDiscount.value) || 0)
+    : 0;
+
   const effectiveItems = cart.map(x=>{
     const original = Number(x.price||0);
-    const free = original > 0 && remaining > 0;
-    if(free){ discount += original; remaining--; }
-    return {...x, originalPrice:original, effectivePrice:free?0:original, creatorFree:free};
+    let itemDiscount = 0;
+
+    if(original > 0 && freeRemaining > 0){
+      itemDiscount = original;
+      freeRemaining--;
+    }
+
+    return {
+      ...x,
+      originalPrice: original,
+      effectivePrice: original - itemDiscount,
+      creatorFree: itemDiscount > 0
+    };
   });
 
-  return {hardware, monthly, discount, effectiveHardware:hardware-discount, effectiveItems};
+  discount += effectiveItems.reduce((a,x)=>a+(x.originalPrice-x.effectivePrice),0);
+
+  const remainingHardware = Math.max(0, hardware - discount);
+
+  if(activeDiscount?.type === "amount"){
+    discount += Math.min(remainingHardware, Math.max(0, Number(activeDiscount.value) || 0));
+  }else if(activeDiscount?.type === "percent"){
+    discount += remainingHardware * Math.min(100, Math.max(0, Number(activeDiscount.value) || 0)) / 100;
+  }
+
+  return {
+    hardware,
+    monthly,
+    discount,
+    effectiveHardware: Math.max(0, hardware-discount),
+    effectiveItems
+  };
 }
 
 function renderCart(){
   cartCount.textContent=cart.length;
   const pricing=getCartPricing();
 
-  if(!cart.length){
-    cartItems.innerHTML='<div class="empty-cart">Your cart is suspiciously empty.<br><small>Add some crumulance.</small></div>';
-  } else {
-    cartItems.innerHTML=pricing.effectiveItems.map((x,i)=>`
+  const productHtml = pricing.effectiveItems.map((x,i)=>`
       <div class="cart-item">
         <div>
           <b>${x.name}</b>
-          <small>${x.monthly?cartMoney(x.monthly)+"/month":(x.creatorFree?"CONTENT CREATOR FREE™":"one-time")}</small>
+          <small>${x.monthly?cartMoney(x.monthly)+"/month":(x.creatorFree?"DISCOUNT APPLIED · FREE ITEM™":"one-time")}</small>
         </div>
         <strong>${x.creatorFree?'<s>'+cartMoney(x.originalPrice)+'</s> 0,00 €':cartMoney(x.effectivePrice)}</strong>
         <button class="remove" data-i="${i}">Remove</button>
       </div>`).join("");
+
+  let discountHtml = "";
+  if(activeDiscount){
+    const label = activeDiscount.type === "free_items"
+      ? `${activeDiscount.value} free item${activeDiscount.value === 1 ? "" : "s"}`
+      : activeDiscount.type === "amount"
+        ? `-${cartMoney(Number(activeDiscount.value)||0)}`
+        : `-${Number(activeDiscount.value)||0}%`;
+
+    discountHtml = `
+      <div class="cart-item applied-discount-item">
+        <div>
+          <b>Discount Code</b>
+          <small>${activeDiscount.code} · ${label}</small>
+        </div>
+        <strong>APPLIED</strong>
+        <button class="remove discount-remove" id="removeDiscount" type="button">Remove</button>
+      </div>`;
   }
+
+  cartItems.innerHTML = (discountHtml + productHtml) ||
+    '<div class="empty-cart">Your cart is suspiciously empty.<br><small>Add some crumulance.</small></div>';
 
   document.getElementById("cartHardware").textContent=cartMoney(pricing.effectiveHardware);
   document.getElementById("cartDiscount").textContent="-"+cartMoney(pricing.discount);
-  document.getElementById("cartMonthly").textContent=cartMoney(pricing.monthly)+"/mo";
+  document.getElementById("cartMonthly").textContent=cartMoney(pricing.monthly);
 
   const status=document.getElementById("discountStatus");
   if(status){
-    status.textContent=activeDiscount
-      ? `Code ${activeDiscount.code} applied: ${activeDiscount.freeItems} one-time item(s) free. Subscriptions are unchanged.`
-      : "Creator codes can make a selected number of cart items free.";
+    status.className = "discount-status" + (activeDiscount ? " success" : "");
+    status.textContent = activeDiscount
+      ? `Code ${activeDiscount.code} applied: ${
+          activeDiscount.type === "free_items"
+            ? `${activeDiscount.value} one-time item(s) free. Subscriptions are unchanged.`
+            : activeDiscount.type === "amount"
+              ? `${cartMoney(activeDiscount.value)} off. Subscriptions are unchanged.`
+              : `${activeDiscount.value}% off. Subscriptions are unchanged.`
+        }`
+      : "Enter a discount code to apply it to your Boggs basket.";
   }
 
   document.querySelectorAll(".remove").forEach(b=>b.onclick=()=>{
+    if(b.id==="removeDiscount") return;
     cart.splice(Number(b.dataset.i),1);
     saveCart();
     renderCart();
   });
+
+  document.getElementById("removeDiscount")?.addEventListener("click",()=>{
+    activeDiscount=null;
+    saveDiscount();
+    discountInput.value="";
+    renderCart();
+  });
 }
+
 function openCart(){cartDrawer.classList.add("open");cartOverlay.classList.add("open")}
 function closeCart(){cartDrawer.classList.remove("open");cartOverlay.classList.remove("open")}
 document.getElementById("cartOpen").onclick=openCart;
@@ -264,100 +324,158 @@ renderCart();
 
 
 
-// Content creator discount codes live in discount-codes.txt so the static
-// GitHub Pages site can be updated without changing the JavaScript.
+
+// Discount codes
 // Format:
-// CODE=NUMBER_OF_FREE_ONE_TIME_ITEMS|ACTIVE=true|EXPIRES=YYYY-MM-DD
-//
-// ACTIVE controls whether the code can be used.
-// EXPIRES is optional and is inclusive: the code remains valid through that date.
+//   WAKATRON64=2
+//     -> 2 free one-time items
+//   WAKATRON64=€10.99
+//     -> €10.99 off one-time hardware
+//   BOGGS10=10%
+//     -> 10% off one-time hardware
+// Optional:
+//   |ACTIVE=true|EXPIRES=2026-12-31|USES=10
 async function loadDiscountCodes(){
   if(discountCodes) return discountCodes;
   discountCodes={};
+
   try{
     const response=await fetch("discount-codes.txt",{cache:"no-store"});
     if(!response.ok) throw new Error("Could not load discount-codes.txt");
+
     const text=await response.text();
+
     text.split(/\r?\n/).forEach(line=>{
       const clean=line.trim();
       if(!clean || clean.startsWith("#") || !clean.includes("=")) return;
 
       const separator=clean.indexOf("=");
-      const rawCode=clean.slice(0,separator);
+      const code=clean.slice(0,separator).trim().toUpperCase();
       const rest=clean.slice(separator+1);
       const fields=rest.split("|").map(x=>x.trim()).filter(Boolean);
-      const freeItems=parseInt(fields.shift() || "",10);
-      const flags={};
+      const rawValue=fields.shift();
+      if(!code || !rawValue) return;
 
+      const flags={};
       fields.forEach(field=>{
         const eq=field.indexOf("=");
-        if(eq===-1) return;
-        const key=field.slice(0,eq).trim().toUpperCase();
-        const value=field.slice(eq+1).trim();
-        flags[key]=value;
+        if(eq!==-1){
+          flags[field.slice(0,eq).trim().toUpperCase()]=field.slice(eq+1).trim();
+        }
       });
 
-      const code=rawCode.trim().toUpperCase();
-      const activeValue=(flags.ACTIVE ?? "true").toLowerCase();
-      const isActive=["true","1","yes","on"].includes(activeValue);
-      const expires=flags.EXPIRES || flags.EXPIRATION || "";
-      let isExpired=false;
+      let type=null;
+      let value=null;
 
-      if(expires && expires.toUpperCase() !== "NEVER") {
-        // Compare calendar dates, not timestamps, so the expiration date itself
-        // remains valid until the end of that date.
+      if(/^\d+(?:[.,]\d+)?$/.test(rawValue)){
+        type="free_items";
+        value=Number(rawValue.replace(",","."));
+      }else if(/^€\s*\d+(?:[.,]\d{1,2})?$/.test(rawValue)){
+        type="amount";
+        value=Number(rawValue.replace("€","").replace(",",".").trim());
+      }else if(/^\d+(?:[.,]\d+)?%$/.test(rawValue)){
+        type="percent";
+        value=Number(rawValue.slice(0,-1).replace(",","."));
+      }
+
+      if(!type || !Number.isFinite(value) || value<0) return;
+
+      const activeValue=(flags.ACTIVE ?? "true").toLowerCase();
+      const active=["true","1","yes","on"].includes(activeValue);
+      const expires=flags.EXPIRES || flags.EXPIRATION || "NEVER";
+
+      let expired=false;
+      if(expires.toUpperCase()!=="NEVER"){
         const match=/^(\d{4})-(\d{2})-(\d{2})$/.exec(expires);
         if(!match) return;
-        const expiryDate=new Date(Number(match[1]),Number(match[2])-1,Number(match[3]));
-        if(Number.isNaN(expiryDate.getTime())) return;
+        const expiry=new Date(Number(match[1]),Number(match[2])-1,Number(match[3]));
         const today=new Date();
         today.setHours(0,0,0,0);
-        expiryDate.setHours(0,0,0,0);
-        isExpired=today>expiryDate;
+        expiry.setHours(0,0,0,0);
+        expired=today>expiry;
       }
 
-      if(code && Number.isFinite(freeItems) && freeItems>=0 && isActive && !isExpired){
-        discountCodes[code]=freeItems;
-      }
+      const uses=flags.USES!==undefined ? Number(flags.USES) : null;
+      discountCodes[code]={code,type,value,active,expired,uses};
     });
   }catch(err){
     console.warn("XBOGGS discount codes unavailable:",err);
   }
+
   return discountCodes;
 }
 
 const applyDiscount=document.getElementById("applyDiscount");
 const discountInput=document.getElementById("discountCode");
+
+async function applyDiscountCode(){
+  const code=discountInput.value.trim().toUpperCase();
+  const status=document.getElementById("discountStatus");
+  const codes=await loadDiscountCodes();
+
+  if(!code){
+    activeDiscount=null;
+    saveDiscount();
+    status.textContent="Enter a discount code.";
+    status.className="discount-status error";
+    renderCart();
+    return;
+  }
+
+  const found=codes[code];
+
+  if(!found){
+    activeDiscount=null;
+    saveDiscount();
+    status.textContent="Discount code not found.";
+    status.className="discount-status error";
+    renderCart();
+    return;
+  }
+
+  if(!found.active){
+    activeDiscount=null;
+    saveDiscount();
+    status.textContent="Discount code is not activated.";
+    status.className="discount-status error";
+    renderCart();
+    return;
+  }
+
+  if(found.expired){
+    activeDiscount=null;
+    saveDiscount();
+    status.textContent="Discount code has expired.";
+    status.className="discount-status error";
+    renderCart();
+    return;
+  }
+
+  if(found.uses!==null && (!Number.isFinite(found.uses) || found.uses<=0)){
+    activeDiscount=null;
+    saveDiscount();
+    status.textContent="Discount code has no uses remaining.";
+    status.className="discount-status error";
+    renderCart();
+    return;
+  }
+
+  activeDiscount={
+    code:found.code,
+    type:found.type,
+    value:found.value,
+    expires:found.expires
+  };
+  saveDiscount();
+  renderCart();
+}
+
 if(applyDiscount && discountInput){
-  applyDiscount.addEventListener("click",async()=>{
-    const code=discountInput.value.trim().toUpperCase();
-    const status=document.getElementById("discountStatus");
-    const codes=await loadDiscountCodes();
-    if(!code){
-      activeDiscount=null;
-      saveDiscount();
-      status.textContent="Enter a creator code.";
-      status.className="discount-status error";
-      renderCart();
-      return;
-    }
-    if(Object.prototype.hasOwnProperty.call(codes,code)){
-      activeDiscount={code,freeItems:codes[code]};
-      saveDiscount();
-      status.textContent=`Code ${code} applied: ${codes[code]} one-time item(s) free.`;
-      renderCart();
-    }else{
-      activeDiscount=null;
-      saveDiscount();
-      status.textContent="Invalid or expired fictional creator code.";
-      status.className="discount-status error";
-      renderCart();
-    }
-  });
-  discountInput.addEventListener("keydown", event => {
-    if(event.key === "Enter"){
+  applyDiscount.addEventListener("click",applyDiscountCode);
+  discountInput.addEventListener("keydown",event=>{
+    if(event.key==="Enter"){
       event.preventDefault();
-      applyDiscount.click();
+      applyDiscountCode();
     }
   });
 }
@@ -461,7 +579,7 @@ if (customerForm) {
       (services.length ? services.map(s => "- " + s).join("\n") : "- None") +
       "\n\n" +
       "Original hardware / one-time total: " + cartMoney(emailOrderContext?.originalHardware ?? hardwareTotal) + "\n" +
-      "Creator discount: " + (emailOrderContext?.discount ? emailOrderContext.discount.code + " (" + emailOrderContext.discount.freeItems + " free item(s))" : "None") + "\n" +
+      "Discount code: " + (emailOrderContext?.discount ? emailOrderContext.discount.code + " (" + (emailOrderContext.discount.type === "free_items" ? emailOrderContext.discount.value + " free item(s)" : emailOrderContext.discount.type === "amount" ? cartMoney(emailOrderContext.discount.value) + " off" : emailOrderContext.discount.value + "% off") + ")" : "None") + "\n" +
       "Hardware / one-time total after discount: " + cartMoney(hardwareTotal) + "\n" +
       "Monthly services: " + cartMoney(monthlyTotal) + "/month\n\n" +
       "Fictional Xboggs storefront order.\n" +
@@ -471,278 +589,3 @@ if (customerForm) {
     window.location.href = "mailto:mylbb@proton.me?subject=" + subject + "&body=" + body;
   });
 }
-
-
-
-/* XBOGGS Discount Codes™ */
-(function () {
-  const CODE_FILE = "discount-codes.txt";
-  let discountCodes = [];
-  let appliedDiscount = null;
-
-  function parseDiscountValue(value) {
-    const raw = String(value || "").trim();
-
-    // A plain number means FREE ITEMS, preserving the original behavior.
-    // Example: WAKATRON64=2 -> 2 free items.
-    if (/^\d+(?:[.,]\d+)?$/.test(raw)) {
-      return {
-        type: "free_items",
-        value: Number(raw.replace(",", "."))
-      };
-    }
-
-    // Fixed amount: WAKATRON64=€10.99
-    if (/^€\s*\d+(?:[.,]\d{1,2})?$/.test(raw)) {
-      return {
-        type: "amount",
-        value: Number(raw.replace("€", "").replace(",", ".").trim())
-      };
-    }
-
-    // Percentage: BOGGS10=10%
-    if (/^\d+(?:[.,]\d+)?%$/.test(raw)) {
-      return {
-        type: "percent",
-        value: Number(raw.slice(0, -1).replace(",", "."))
-      };
-    }
-
-    return null;
-  }
-
-  function parseDiscountCodes(text) {
-    return text.split(/\r?\n/)
-      .map(line => line.trim())
-      .filter(Boolean)
-      .filter(line => !line.startsWith("#"))
-      .map(line => {
-        const parts = line.split("|");
-        const first = parts.shift();
-        const eq = first.indexOf("=");
-        if (eq < 0) return null;
-
-        const code = first.slice(0, eq).trim();
-        const value = parseDiscountValue(first.slice(eq + 1).trim());
-        if (!value) return null;
-
-        const flags = {};
-        parts.forEach(part => {
-          const i = part.indexOf("=");
-          if (i >= 0) {
-            flags[part.slice(0, i).trim().toUpperCase()] = part.slice(i + 1).trim();
-          }
-        });
-
-        return {
-          code,
-          type: value.type,
-          value: value.value,
-          active: String(flags.ACTIVE ?? "true").toLowerCase() === "true",
-          expires: flags.EXPIRES || "NEVER",
-          uses: flags.USES !== undefined ? Number(flags.USES) : null
-        };
-      })
-      .filter(Boolean);
-  }
-
-  function status(code) {
-    if (!code) return { valid: false, message: "Enter a discount code." };
-
-    const found = discountCodes.find(
-      c => c.code.toLowerCase() === code.trim().toLowerCase()
-    );
-
-    if (!found) return {
-      valid: false,
-      message: "Discount code not found."
-    };
-
-    if (!found.active) return {
-      valid: false,
-      message: "Discount code is not activated."
-    };
-
-    if (found.expires !== "NEVER") {
-      const expiry = new Date(found.expires + "T23:59:59");
-      if (Number.isNaN(expiry.getTime()) || Date.now() > expiry.getTime()) {
-        return {
-          valid: false,
-          message: "Discount code has expired."
-        };
-      }
-    }
-
-    if (found.uses !== null && (!Number.isFinite(found.uses) || found.uses <= 0)) {
-      return {
-        valid: false,
-        message: "Discount code has no uses remaining."
-      };
-    }
-
-    return { valid: true, code: found };
-  }
-
-  function description(c) {
-    if (c.type === "free_items") {
-      const n = c.value;
-      return `${n} free item${n === 1 ? "" : "s"}`;
-    }
-
-    if (c.type === "amount") {
-      return `€${c.value.toFixed(2).replace(".", ",")} discount`;
-    }
-
-    return `${c.value}% discount`;
-  }
-
-  function findInput() {
-    return document.querySelector(
-      'input[name*="code" i], input[id*="code" i], input[placeholder*="code" i], ' +
-      'input[name*="discount" i], input[id*="discount" i], input[placeholder*="discount" i]'
-    );
-  }
-
-  function checkoutContainer() {
-    return document.querySelector(
-      '#cart, #checkout, .cart, .checkout, [data-cart], [data-checkout], main'
-    ) || document.body;
-  }
-
-  function message(text, error = false) {
-    let box = document.getElementById("xboggs-discount-message");
-
-    if (!box) {
-      box = document.createElement("div");
-      box.id = "xboggs-discount-message";
-      const input = findInput();
-
-      if (input?.parentElement) input.parentElement.appendChild(box);
-      else checkoutContainer().prepend(box);
-    }
-
-    box.textContent = text;
-    box.style.cssText =
-      "margin-top:8px;font-weight:700;color:" +
-      (error ? "#d00000" : "#087f23") + ";";
-  }
-
-  function renderApplied() {
-    document.getElementById("xboggs-applied-discount")?.remove();
-
-    if (!appliedDiscount) return;
-
-    const row = document.createElement("div");
-    row.id = "xboggs-applied-discount";
-    row.style.cssText =
-      "display:flex;align-items:center;justify-content:space-between;" +
-      "gap:16px;padding:12px;margin:12px 0;border:1px solid #ddd;background:#fff;";
-
-    const info = document.createElement("div");
-
-    const title = document.createElement("strong");
-    title.textContent = "Discount Code";
-
-    const details = document.createElement("div");
-    details.textContent =
-      `${appliedDiscount.code} — ${description(appliedDiscount)}`;
-    details.style.cssText = "font-size:.9em;margin-top:4px;";
-
-    info.append(title, details);
-
-    const remove = document.createElement("button");
-    remove.type = "button";
-    remove.textContent = "Remove";
-
-    remove.addEventListener("click", () => {
-      appliedDiscount = null;
-      const input = findInput();
-      if (input) input.value = "";
-      renderApplied();
-      message("Discount code removed.");
-      window.dispatchEvent(new CustomEvent("xboggs:discount-code-removed"));
-    });
-
-    row.append(info, remove);
-    checkoutContainer().prepend(row);
-  }
-
-  function applyDiscountCode(inputCode) {
-    const result = status(inputCode);
-
-    if (!result.valid) {
-      appliedDiscount = null;
-      renderApplied();
-      message(result.message, true);
-      return false;
-    }
-
-    appliedDiscount = result.code;
-    renderApplied();
-
-    message(`Discount code applied: ${description(result.code)}.`);
-    window.dispatchEvent(new CustomEvent("xboggs:discount-code-applied", {
-      detail: result.code
-    }));
-
-    return true;
-  }
-
-  function wire() {
-    const input = findInput();
-    if (!input || input.dataset.xboggsDiscountWired) return;
-
-    input.dataset.xboggsDiscountWired = "true";
-
-    let button = input.parentElement?.querySelector(
-      'button, input[type="button"], input[type="submit"]'
-    );
-
-    if (!button) {
-      button = document.createElement("button");
-      button.type = "button";
-      button.textContent = "Apply";
-      input.parentElement?.appendChild(button);
-    }
-
-    button.addEventListener("click", e => {
-      e.preventDefault();
-      applyDiscountCode(input.value);
-    });
-
-    input.addEventListener("keydown", e => {
-      if (e.key === "Enter") {
-        e.preventDefault();
-        applyDiscountCode(input.value);
-      }
-    });
-  }
-
-  async function load() {
-    try {
-      const response = await fetch(CODE_FILE, { cache: "no-store" });
-      if (!response.ok) throw new Error();
-      discountCodes = parseDiscountCodes(await response.text());
-      wire();
-    } catch {
-      message("Discount codes are currently unavailable.", true);
-    }
-  }
-
-  window.xboggsApplyDiscountCode = applyDiscountCode;
-  window.xboggsRemoveDiscountCode = () => {
-    appliedDiscount = null;
-    renderApplied();
-  };
-
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", load);
-  } else {
-    load();
-  }
-
-  new MutationObserver(wire).observe(document.documentElement, {
-    childList: true,
-    subtree: true
-  });
-})();
