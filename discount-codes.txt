@@ -1,10 +1,15 @@
 # XBOGGS CONTENT CREATOR DISCOUNT CODES™
-# Format: CODE=NUMBER_OF_FREE_ONE_TIME_ITEMS
+# Format: CODE=NUMBER_OF_FREE_ONE_TIME_ITEMS|ACTIVE=true|EXPIRES=YYYY-MM-DD
 #
-# Edit this file on GitHub Pages to add/revoke codes.
+# ACTIVE=true means the code is currently enabled.
+# ACTIVE=false disables the code without deleting it.
+# EXPIRES is optional and inclusive. Use EXPIRES=NEVER for no expiration.
+# The expiration date must use YYYY-MM-DD.
+#
+# Edit this file on GitHub Pages to add, disable, or expire codes.
 # The number means how many qualifying one-time cart items become free.
 #
-# Example creator review code:
-jonocraft7=7
-wakatron64=2
-BringusStudios10=1
+# Example creator codes:
+jonocraft7=7|ACTIVE=true|EXPIRES=2026-12-31
+wakatron64=2|ACTIVE=true|EXPIRES=NEVER
+BringusStudios10=1|ACTIVE=false|EXPIRES=2026-10-31
