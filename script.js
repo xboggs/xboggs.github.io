@@ -266,7 +266,11 @@ renderCart();
 
 // Content creator discount codes live in discount-codes.txt so the static
 // GitHub Pages site can be updated without changing the JavaScript.
-// Format: CODE=NUMBER_OF_FREE_ONE_TIME_ITEMS
+// Format:
+// CODE=NUMBER_OF_FREE_ONE_TIME_ITEMS|ACTIVE=true|EXPIRES=YYYY-MM-DD
+//
+// ACTIVE controls whether the code can be used.
+// EXPIRES is optional and is inclusive: the code remains valid through that date.
 async function loadDiscountCodes(){
   if(discountCodes) return discountCodes;
   discountCodes={};
@@ -277,10 +281,44 @@ async function loadDiscountCodes(){
     text.split(/\r?\n/).forEach(line=>{
       const clean=line.trim();
       if(!clean || clean.startsWith("#") || !clean.includes("=")) return;
-      const [rawCode, rawCount]=clean.split("=");
+
+      const separator=clean.indexOf("=");
+      const rawCode=clean.slice(0,separator);
+      const rest=clean.slice(separator+1);
+      const fields=rest.split("|").map(x=>x.trim()).filter(Boolean);
+      const freeItems=parseInt(fields.shift() || "",10);
+      const flags={};
+
+      fields.forEach(field=>{
+        const eq=field.indexOf("=");
+        if(eq===-1) return;
+        const key=field.slice(0,eq).trim().toUpperCase();
+        const value=field.slice(eq+1).trim();
+        flags[key]=value;
+      });
+
       const code=rawCode.trim().toUpperCase();
-      const freeItems=parseInt(rawCount.trim(),10);
-      if(code && Number.isFinite(freeItems) && freeItems>=0) discountCodes[code]=freeItems;
+      const activeValue=(flags.ACTIVE ?? "true").toLowerCase();
+      const isActive=["true","1","yes","on"].includes(activeValue);
+      const expires=flags.EXPIRES || flags.EXPIRATION || "";
+      let isExpired=false;
+
+      if(expires && expires.toUpperCase() !== "NEVER") {
+        // Compare calendar dates, not timestamps, so the expiration date itself
+        // remains valid until the end of that date.
+        const match=/^(\d{4})-(\d{2})-(\d{2})$/.exec(expires);
+        if(!match) return;
+        const expiryDate=new Date(Number(match[1]),Number(match[2])-1,Number(match[3]));
+        if(Number.isNaN(expiryDate.getTime())) return;
+        const today=new Date();
+        today.setHours(0,0,0,0);
+        expiryDate.setHours(0,0,0,0);
+        isExpired=today>expiryDate;
+      }
+
+      if(code && Number.isFinite(freeItems) && freeItems>=0 && isActive && !isExpired){
+        discountCodes[code]=freeItems;
+      }
     });
   }catch(err){
     console.warn("XBOGGS discount codes unavailable:",err);
