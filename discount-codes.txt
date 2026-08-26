@@ -10,6 +10,6 @@
 # The number means how many qualifying one-time cart items become free.
 #
 # Example creator codes:
-jonocraft7=7|ACTIVE=true|EXPIRES=2026-08-27
+jonocraft7=7|ACTIVE=true|EXPIRES=2026-08-26
 wakatron64=2|ACTIVE=true|EXPIRES=2026-08-28
 BringusStudios10=1|ACTIVE=false|EXPIRES=2026-10-31
