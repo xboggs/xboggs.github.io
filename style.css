@@ -162,3 +162,10 @@
 .cart-totals span,.cart-totals b{display:block !important}
 
 .cart-saved-note{display:block;margin-top:4px;font-size:10px;opacity:.5;letter-spacing:.04em}
+
+
+.applied-discount-item{border-top:1px solid #b7ff00;background:#151a08}
+.applied-discount-item strong{color:#b7ff00}
+.applied-discount-item .discount-remove{color:#ff6b6b}
+.discount-status.error{color:#ff6b6b}
+.discount-status.success{color:#b7ff00}
